@@ -10,7 +10,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 
-	. "github.com/tus/tusd/v2/pkg/handler"
+	. "github.com/Nealsoni00/tusd/v2/pkg/handler"
 )
 
 func TestPost(t *testing.T) {
@@ -545,8 +545,74 @@ func TestPost(t *testing.T) {
 		})
 	})
 
-	SubTest(t, "ExperimentalProtocol", func(t *testing.T, _ *MockFullDataStore, _ *StoreComposer) {
-		SubTest(t, "CompleteUpload", func(t *testing.T, store *MockFullDataStore, _ *StoreComposer) {
+	completeUploadTests := []struct {
+		name     string
+		httpTest httpTest
+		response []httptestrecorder.InformationalResponse
+	}{
+		{
+			name: "experimentalProtocol-draft-02 Complete Upload Test",
+			httpTest: httpTest{
+				Method: "POST",
+				ReqHeader: map[string]string{
+					"Upload-Draft-Interop-Version": "4",
+					"Upload-Complete":              "?1",
+					"Content-Type":                 "text/plain; charset=utf-8",
+					"Content-Disposition":          "attachment; filename=hello.txt",
+				},
+				ReqBody: strings.NewReader("hello world"),
+				Code:    http.StatusCreated,
+				ResHeader: map[string]string{
+					"Upload-Draft-Interop-Version": "4",
+					"Location":                     "http://tus.io/files/foo",
+					"Upload-Offset":                "11",
+				},
+			},
+			response: []httptestrecorder.InformationalResponse{
+				{
+					Code: 104,
+					Header: http.Header{
+						"Upload-Draft-Interop-Version": []string{"4"},
+						"Location":                     []string{"http://tus.io/files/foo"},
+						"X-Content-Type-Options":       []string{"nosniff"},
+					},
+				},
+			},
+		},
+
+		{
+			name: "experimentalProtocol-draft-01 Complete Upload Test with Upload-Length",
+			httpTest: httpTest{
+				Method: "POST",
+				ReqHeader: map[string]string{
+					"Upload-Draft-Interop-Version": "3",
+					"Upload-Incomplete":            "?0",
+					"Content-Type":                 "text/plain; charset=utf-8",
+					"Content-Disposition":          "attachment; filename=hello.txt",
+				},
+				ReqBody: strings.NewReader("hello world"),
+				Code:    http.StatusCreated,
+				ResHeader: map[string]string{
+					"Upload-Draft-Interop-Version": "3",
+					"Location":                     "http://tus.io/files/foo",
+					"Upload-Offset":                "11",
+				},
+			},
+			response: []httptestrecorder.InformationalResponse{
+				{
+					Code: 104,
+					Header: http.Header{
+						"Upload-Draft-Interop-Version": []string{"3"},
+						"Location":                     []string{"http://tus.io/files/foo"},
+						"X-Content-Type-Options":       []string{"nosniff"},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range completeUploadTests {
+		SubTest(t, tc.name, func(t *testing.T, store *MockFullDataStore, _ *StoreComposer) {
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 			locker := NewMockFullLocker(ctrl)
@@ -588,13 +654,51 @@ func TestPost(t *testing.T) {
 				EnableExperimentalProtocol: true,
 			})
 
-			res := (&httpTest{
+			res := (&tc.httpTest).Run(handler, t)
+			a := assert.New(t)
+			a.Equal(tc.response, res.InformationalResponses)
+		})
+	}
+
+	incompleteUploadTests := []struct {
+		name     string
+		httpTest httpTest
+		response []httptestrecorder.InformationalResponse
+	}{
+		{
+			name: "experimentalProtocol-draft-01 Incomplete Upload Test with Upload-Length",
+			httpTest: httpTest{
+				Method: "POST",
+				ReqHeader: map[string]string{
+					"Upload-Draft-Interop-Version": "3",
+					"Upload-Incomplete":            "?1",
+				},
+				ReqBody: strings.NewReader("hello world"),
+				Code:    http.StatusCreated,
+				ResHeader: map[string]string{
+					"Upload-Draft-Interop-Version": "3",
+					"Location":                     "http://tus.io/files/foo",
+					"Upload-Offset":                "11",
+				},
+			},
+			response: []httptestrecorder.InformationalResponse{
+				{
+					Code: 104,
+					Header: http.Header{
+						"Upload-Draft-Interop-Version": []string{"3"},
+						"Location":                     []string{"http://tus.io/files/foo"},
+						"X-Content-Type-Options":       []string{"nosniff"},
+					},
+				},
+			},
+		},
+		{
+			name: "experimentalProtocol-draft-02 Incomplete Upload Test",
+			httpTest: httpTest{
 				Method: "POST",
 				ReqHeader: map[string]string{
 					"Upload-Draft-Interop-Version": "4",
-					"Upload-Complete":              "?1",
-					"Content-Type":                 "text/plain; charset=utf-8",
-					"Content-Disposition":          "attachment; filename=hello.txt",
+					"Upload-Complete":              "?0",
 				},
 				ReqBody: strings.NewReader("hello world"),
 				Code:    http.StatusCreated,
@@ -603,10 +707,8 @@ func TestPost(t *testing.T) {
 					"Location":                     "http://tus.io/files/foo",
 					"Upload-Offset":                "11",
 				},
-			}).Run(handler, t)
-
-			a := assert.New(t)
-			a.Equal([]httptestrecorder.InformationalResponse{
+			},
+			response: []httptestrecorder.InformationalResponse{
 				{
 					Code: 104,
 					Header: http.Header{
@@ -615,10 +717,12 @@ func TestPost(t *testing.T) {
 						"X-Content-Type-Options":       []string{"nosniff"},
 					},
 				},
-			}, res.InformationalResponses)
-		})
+			},
+		},
+	}
 
-		SubTest(t, "IncompleteUpload", func(t *testing.T, store *MockFullDataStore, _ *StoreComposer) {
+	for _, tc := range incompleteUploadTests {
+		SubTest(t, tc.name, func(t *testing.T, store *MockFullDataStore, _ *StoreComposer) {
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 			locker := NewMockFullLocker(ctrl)
@@ -651,32 +755,9 @@ func TestPost(t *testing.T) {
 				EnableExperimentalProtocol: true,
 			})
 
-			res := (&httpTest{
-				Method: "POST",
-				ReqHeader: map[string]string{
-					"Upload-Draft-Interop-Version": "4",
-					"Upload-Complete":              "?0",
-				},
-				ReqBody: strings.NewReader("hello world"),
-				Code:    http.StatusCreated,
-				ResHeader: map[string]string{
-					"Upload-Draft-Interop-Version": "4",
-					"Location":                     "http://tus.io/files/foo",
-					"Upload-Offset":                "11",
-				},
-			}).Run(handler, t)
-
+			res := (&tc.httpTest).Run(handler, t)
 			a := assert.New(t)
-			a.Equal([]httptestrecorder.InformationalResponse{
-				{
-					Code: 104,
-					Header: http.Header{
-						"Upload-Draft-Interop-Version": []string{"4"},
-						"Location":                     []string{"http://tus.io/files/foo"},
-						"X-Content-Type-Options":       []string{"nosniff"},
-					},
-				},
-			}, res.InformationalResponses)
+			a.Equal(tc.response, res.InformationalResponses)
 		})
-	})
+	}
 }

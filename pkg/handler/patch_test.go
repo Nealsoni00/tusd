@@ -12,7 +12,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 
-	. "github.com/tus/tusd/v2/pkg/handler"
+	. "github.com/Nealsoni00/tusd/v2/pkg/handler"
 )
 
 func TestPatch(t *testing.T) {
@@ -810,8 +810,48 @@ func TestPatch(t *testing.T) {
 		}).Run(handler, t)
 	})
 
-	SubTest(t, "ExperimentalProtocol", func(t *testing.T, _ *MockFullDataStore, _ *StoreComposer) {
-		SubTest(t, "CompleteUploadWithKnownSize", func(t *testing.T, store *MockFullDataStore, composer *StoreComposer) {
+	completeUploadWithKnownSizeTests := []struct {
+		name     string
+		httpTest httpTest
+	}{
+		{
+			name: "ExperimentalProtocol-Draft-01",
+			httpTest: httpTest{
+				Method: "PATCH",
+				URL:    "yes",
+				ReqHeader: map[string]string{
+					"Upload-Draft-Interop-Version": "3",
+					"Upload-Offset":                "5",
+					"Upload-Incomplete":            "?0",
+				},
+				ReqBody: strings.NewReader("hello"),
+				Code:    http.StatusNoContent,
+				ResHeader: map[string]string{
+					"Upload-Offset": "10",
+				},
+			},
+		},
+		{
+			name: "ExperimentalProtocol-Draft-02",
+			httpTest: httpTest{
+				Method: "PATCH",
+				URL:    "yes",
+				ReqHeader: map[string]string{
+					"Upload-Draft-Interop-Version": "4",
+					"Upload-Offset":                "5",
+					"Upload-Complete":              "?1",
+				},
+				ReqBody: strings.NewReader("hello"),
+				Code:    http.StatusNoContent,
+				ResHeader: map[string]string{
+					"Upload-Offset": "10",
+				},
+			},
+		},
+	}
+
+	for _, test := range completeUploadWithKnownSizeTests {
+		SubTest(t, test.name, func(t *testing.T, store *MockFullDataStore, composer *StoreComposer) {
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 			upload := NewMockFullUpload(ctrl)
@@ -833,7 +873,34 @@ func TestPatch(t *testing.T) {
 				EnableExperimentalProtocol: true,
 			})
 
-			(&httpTest{
+			(&test.httpTest).Run(handler, t)
+		})
+	}
+
+	completeUploadWithUnknownSizeTests := []struct {
+		name     string
+		httpTest httpTest
+	}{
+		{
+			name: "CompleteUploadWithUnknownSize ExperimentalProtocol-Draft-01",
+			httpTest: httpTest{
+				Method: "PATCH",
+				URL:    "yes",
+				ReqHeader: map[string]string{
+					"Upload-Draft-Interop-Version": "3",
+					"Upload-Offset":                "5",
+					"Upload-Incomplete":            "?0",
+				},
+				ReqBody: strings.NewReader("hello"),
+				Code:    http.StatusNoContent,
+				ResHeader: map[string]string{
+					"Upload-Offset": "10",
+				},
+			},
+		},
+		{
+			name: "CompleteUploadWithUnknownSize ExperimentalProtocol-Draft-02",
+			httpTest: httpTest{
 				Method: "PATCH",
 				URL:    "yes",
 				ReqHeader: map[string]string{
@@ -846,9 +913,12 @@ func TestPatch(t *testing.T) {
 				ResHeader: map[string]string{
 					"Upload-Offset": "10",
 				},
-			}).Run(handler, t)
-		})
-		SubTest(t, "CompleteUploadWithUnknownSize", func(t *testing.T, store *MockFullDataStore, composer *StoreComposer) {
+			},
+		},
+	}
+
+	for _, test := range completeUploadWithUnknownSizeTests {
+		SubTest(t, test.name, func(t *testing.T, store *MockFullDataStore, composer *StoreComposer) {
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 			upload := NewMockFullUpload(ctrl)
@@ -878,22 +948,52 @@ func TestPatch(t *testing.T) {
 				EnableExperimentalProtocol: true,
 			})
 
-			(&httpTest{
+			(&test.httpTest).Run(handler, t)
+		})
+	}
+
+	continueUploadWithKnownSizeTests := []struct {
+		name     string
+		httpTest httpTest
+	}{
+		{
+			name: "ContinueUploadWithKnownSize ExperimentalProtocol-Draft-01",
+			httpTest: httpTest{
+				Method: "PATCH",
+				URL:    "yes",
+				ReqHeader: map[string]string{
+					"Upload-Draft-Interop-Version": "3",
+					"Upload-Offset":                "5",
+					"Upload-Incomplete":            "?1",
+				},
+				ReqBody: strings.NewReader("hel"),
+				Code:    http.StatusNoContent,
+				ResHeader: map[string]string{
+					"Upload-Offset": "8",
+				},
+			},
+		},
+		{
+			name: "ContinueUploadWithKnownSize ExperimentalProtocol-Draft-02",
+			httpTest: httpTest{
 				Method: "PATCH",
 				URL:    "yes",
 				ReqHeader: map[string]string{
 					"Upload-Draft-Interop-Version": "4",
 					"Upload-Offset":                "5",
-					"Upload-Complete":              "?1",
+					"Upload-Complete":              "?0",
 				},
-				ReqBody: strings.NewReader("hello"),
+				ReqBody: strings.NewReader("hel"),
 				Code:    http.StatusNoContent,
 				ResHeader: map[string]string{
-					"Upload-Offset": "10",
+					"Upload-Offset": "8",
 				},
-			}).Run(handler, t)
-		})
-		SubTest(t, "ContinueUploadWithKnownSize", func(t *testing.T, store *MockFullDataStore, composer *StoreComposer) {
+			},
+		},
+	}
+
+	for _, test := range continueUploadWithKnownSizeTests {
+		SubTest(t, test.name, func(t *testing.T, store *MockFullDataStore, composer *StoreComposer) {
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 			upload := NewMockFullUpload(ctrl)
@@ -914,7 +1014,34 @@ func TestPatch(t *testing.T) {
 				EnableExperimentalProtocol: true,
 			})
 
-			(&httpTest{
+			(&test.httpTest).Run(handler, t)
+		})
+	}
+
+	continueUploadWithUnknownSizeTests := []struct {
+		name     string
+		httpTest httpTest
+	}{
+		{
+			name: "ContinueUploadWithUnknownSize ExperimentalProtocol-Draft-01",
+			httpTest: httpTest{
+				Method: "PATCH",
+				URL:    "yes",
+				ReqHeader: map[string]string{
+					"Upload-Draft-Interop-Version": "3",
+					"Upload-Offset":                "5",
+					"Upload-Incomplete":            "?1",
+				},
+				ReqBody: strings.NewReader("hel"),
+				Code:    http.StatusNoContent,
+				ResHeader: map[string]string{
+					"Upload-Offset": "8",
+				},
+			},
+		},
+		{
+			name: "ContinueUploadWithUnknownSize ExperimentalProtocol-Draft-02",
+			httpTest: httpTest{
 				Method: "PATCH",
 				URL:    "yes",
 				ReqHeader: map[string]string{
@@ -927,9 +1054,12 @@ func TestPatch(t *testing.T) {
 				ResHeader: map[string]string{
 					"Upload-Offset": "8",
 				},
-			}).Run(handler, t)
-		})
-		SubTest(t, "ContinueUploadWithUnknownSize", func(t *testing.T, store *MockFullDataStore, composer *StoreComposer) {
+			},
+		},
+	}
+
+	for _, test := range continueUploadWithUnknownSizeTests {
+		SubTest(t, test.name, func(t *testing.T, store *MockFullDataStore, composer *StoreComposer) {
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 			upload := NewMockFullUpload(ctrl)
@@ -950,20 +1080,7 @@ func TestPatch(t *testing.T) {
 				EnableExperimentalProtocol: true,
 			})
 
-			(&httpTest{
-				Method: "PATCH",
-				URL:    "yes",
-				ReqHeader: map[string]string{
-					"Upload-Draft-Interop-Version": "4",
-					"Upload-Offset":                "5",
-					"Upload-Complete":              "?0",
-				},
-				ReqBody: strings.NewReader("hel"),
-				Code:    http.StatusNoContent,
-				ResHeader: map[string]string{
-					"Upload-Offset": "8",
-				},
-			}).Run(handler, t)
+			(&test.httpTest).Run(handler, t)
 		})
-	})
+	}
 }
