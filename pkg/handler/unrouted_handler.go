@@ -1245,11 +1245,7 @@ func (handler *UnroutedHandler) sendProgressMessages(c *httpContext, info FileIn
 // X-Forwarded-Proto and Forwarded headers will also be checked to
 // support proxies.
 func getHostAndProtocol(r *http.Request, allowForwarded bool) (host, proto string) {
-	if r.TLS != nil {
-		proto = "https"
-	} else {
-		proto = "http"
-	}
+	proto = "https"
 
 	host = r.Host
 

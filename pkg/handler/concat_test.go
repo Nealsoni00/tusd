@@ -160,7 +160,7 @@ func TestConcat(t *testing.T) {
 					// A space between `final;` and the first URL should be allowed due to
 					// compatibility reasons, even if the specification does not define
 					// it. Therefore this character is included in this test case.
-					"Upload-Concat":   "final; http://tus.io/files/a /files/b/",
+					"Upload-Concat":   "final; https://tus.io/files/a /files/b/",
 					"X-Custom-Header": "tada",
 				},
 				Code: http.StatusCreated,
@@ -210,7 +210,7 @@ func TestConcat(t *testing.T) {
 				},
 				Code: http.StatusOK,
 				ResHeader: map[string]string{
-					"Upload-Concat": "final;http://tus.io/files/a http://tus.io/files/b",
+					"Upload-Concat": "final;https://tus.io/files/a https://tus.io/files/b",
 					"Upload-Length": "10",
 					"Upload-Offset": "10",
 				},
@@ -243,7 +243,7 @@ func TestConcat(t *testing.T) {
 				Method: "POST",
 				ReqHeader: map[string]string{
 					"Tus-Resumable": "1.0.0",
-					"Upload-Concat": "final;http://tus.io/files/c",
+					"Upload-Concat": "final;https://tus.io/files/c",
 				},
 				Code: http.StatusBadRequest,
 			}).Run(handler, t)
@@ -376,7 +376,7 @@ func TestConcat(t *testing.T) {
 				Method: "POST",
 				ReqHeader: map[string]string{
 					"Tus-Resumable": "1.0.0",
-					"Upload-Concat": "final; http://tus.io/files/aaa/123 /files/bbb/123",
+					"Upload-Concat": "final; https://tus.io/files/aaa/123 /files/bbb/123",
 				},
 				Code: http.StatusCreated,
 			}).Run(handler, t)
