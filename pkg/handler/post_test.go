@@ -237,7 +237,7 @@ func TestPost(t *testing.T) {
 				},
 				Code: http.StatusCreated,
 				ResHeader: map[string]string{
-					"Location": "http://tus.io/files/foo",
+					"Location": "https://tus.io/files/foo",
 				},
 			}).Run(handler, t)
 		})
@@ -390,7 +390,7 @@ func TestPost(t *testing.T) {
 				},
 				Code: http.StatusCreated,
 				ResHeader: map[string]string{
-					"Location": "http://tus.io/files/foo",
+					"Location": "https://tus.io/files/foo",
 				},
 			}).Run(handler, t)
 		})
@@ -446,7 +446,7 @@ func TestPost(t *testing.T) {
 				ReqBody: strings.NewReader("hello"),
 				Code:    http.StatusCreated,
 				ResHeader: map[string]string{
-					"Location":      "http://tus.io/files/foo",
+					"Location":      "https://tus.io/files/foo",
 					"Upload-Offset": "5",
 				},
 			}).Run(handler, t)
@@ -519,7 +519,7 @@ func TestPost(t *testing.T) {
 				ReqBody: strings.NewReader("hello"),
 				Code:    http.StatusCreated,
 				ResHeader: map[string]string{
-					"Location":      "http://tus.io/files/foo",
+					"Location":      "https://tus.io/files/foo",
 					"Upload-Offset": "",
 				},
 			}).Run(handler, t)
@@ -537,7 +537,7 @@ func TestPost(t *testing.T) {
 					"Tus-Resumable": "1.0.0",
 					"Upload-Length": "300",
 					"Content-Type":  "application/offset+octet-stream",
-					"Upload-Concat": "final;http://tus.io/files/a http://tus.io/files/b",
+					"Upload-Concat": "final;https://tus.io/files/a https://tus.io/files/b",
 				},
 				ReqBody: strings.NewReader("hello"),
 				Code:    http.StatusForbidden,
@@ -564,7 +564,7 @@ func TestPost(t *testing.T) {
 				Code:    http.StatusCreated,
 				ResHeader: map[string]string{
 					"Upload-Draft-Interop-Version": "4",
-					"Location":                     "http://tus.io/files/foo",
+					"Location":                     "https://tus.io/files/foo",
 					"Upload-Offset":                "11",
 				},
 			},
@@ -573,7 +573,7 @@ func TestPost(t *testing.T) {
 					Code: 104,
 					Header: http.Header{
 						"Upload-Draft-Interop-Version": []string{"4"},
-						"Location":                     []string{"http://tus.io/files/foo"},
+						"Location":                     []string{"https://tus.io/files/foo"},
 						"X-Content-Type-Options":       []string{"nosniff"},
 					},
 				},
@@ -594,7 +594,7 @@ func TestPost(t *testing.T) {
 				Code:    http.StatusCreated,
 				ResHeader: map[string]string{
 					"Upload-Draft-Interop-Version": "3",
-					"Location":                     "http://tus.io/files/foo",
+					"Location":                     "https://tus.io/files/foo",
 					"Upload-Offset":                "11",
 				},
 			},
@@ -603,7 +603,7 @@ func TestPost(t *testing.T) {
 					Code: 104,
 					Header: http.Header{
 						"Upload-Draft-Interop-Version": []string{"3"},
-						"Location":                     []string{"http://tus.io/files/foo"},
+						"Location":                     []string{"https://tus.io/files/foo"},
 						"X-Content-Type-Options":       []string{"nosniff"},
 					},
 				},
@@ -677,7 +677,7 @@ func TestPost(t *testing.T) {
 				Code:    http.StatusCreated,
 				ResHeader: map[string]string{
 					"Upload-Draft-Interop-Version": "3",
-					"Location":                     "http://tus.io/files/foo",
+					"Location":                     "https://tus.io/files/foo",
 					"Upload-Offset":                "11",
 				},
 			},
@@ -686,7 +686,7 @@ func TestPost(t *testing.T) {
 					Code: 104,
 					Header: http.Header{
 						"Upload-Draft-Interop-Version": []string{"3"},
-						"Location":                     []string{"http://tus.io/files/foo"},
+						"Location":                     []string{"https://tus.io/files/foo"},
 						"X-Content-Type-Options":       []string{"nosniff"},
 					},
 				},
@@ -704,7 +704,7 @@ func TestPost(t *testing.T) {
 				Code:    http.StatusCreated,
 				ResHeader: map[string]string{
 					"Upload-Draft-Interop-Version": "4",
-					"Location":                     "http://tus.io/files/foo",
+					"Location":                     "https://tus.io/files/foo",
 					"Upload-Offset":                "11",
 				},
 			},
@@ -713,7 +713,7 @@ func TestPost(t *testing.T) {
 					Code: 104,
 					Header: http.Header{
 						"Upload-Draft-Interop-Version": []string{"4"},
-						"Location":                     []string{"http://tus.io/files/foo"},
+						"Location":                     []string{"https://tus.io/files/foo"},
 						"X-Content-Type-Options":       []string{"nosniff"},
 					},
 				},
