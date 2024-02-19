@@ -40,7 +40,7 @@ func NewHandler(config Config) (*Handler, error) {
 		case "":
 			// Root endpoint for upload creation
 			switch method {
-			case "POST":
+			case "POST", "PUT":
 				handler.PostFile(w, r)
 			default:
 				w.Header().Add("Allow", "POST")
