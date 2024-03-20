@@ -23,6 +23,7 @@ type draftVersion string
 const (
 	InteropVersion3 draftVersion = "3" // From draft version -01
 	InteropVersion4 draftVersion = "4" // From draft version -02
+	InteropVersion5 draftVersion = "5" // From draft version -03
 )
 
 var (
@@ -667,7 +668,7 @@ func (handler *UnroutedHandler) HeadFile(w http.ResponseWriter, r *http.Request)
 			} else {
 				resp.Header["Upload-Incomplete"] = "?1"
 			}
-		case InteropVersion4:
+		case InteropVersion4, InteropVersion5:
 			if uploadComplete {
 				resp.Header["Upload-Complete"] = "?1"
 			} else {
@@ -1360,7 +1361,7 @@ func (handler UnroutedHandler) supportsDraftVersionResumableUploadRequest(r *htt
 func getDraftVersionResumableUpload(r *http.Request) draftVersion {
 	version := draftVersion(r.Header.Get("Upload-Draft-Interop-Version"))
 	switch version {
-	case InteropVersion3, InteropVersion4:
+	case InteropVersion3, InteropVersion4, InteropVersion5:
 		return version
 	default:
 		return ""
@@ -1372,7 +1373,7 @@ func getDraftVersionResumableUpload(r *http.Request) draftVersion {
 func isDraftVersionResumableUploadComplete(r *http.Request) bool {
 	currentUploadDraftInteropVersion := getDraftVersionResumableUpload(r)
 	switch currentUploadDraftInteropVersion {
-	case InteropVersion4:
+	case InteropVersion4, InteropVersion5:
 		return r.Header.Get("Upload-Complete") == "?1"
 	case InteropVersion3:
 		return r.Header.Get("Upload-Incomplete") == "?0"
