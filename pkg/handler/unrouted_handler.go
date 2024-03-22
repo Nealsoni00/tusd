@@ -21,9 +21,10 @@ const UploadLengthDeferred = "1"
 type draftVersion string
 
 const (
-	InteropVersion3 draftVersion = "3" // From draft version -01
-	InteropVersion4 draftVersion = "4" // From draft version -02
-	InteropVersion5 draftVersion = "5" // From draft version -03
+	NormalUpload    draftVersion = "fallback" // Fallback to normal upload
+	InteropVersion3 draftVersion = "3"        // From draft version -01
+	InteropVersion4 draftVersion = "4"        // From draft version -02
+	InteropVersion5 draftVersion = "5"        // From draft version -03
 )
 
 var (
@@ -1364,7 +1365,10 @@ func getDraftVersionResumableUpload(r *http.Request) draftVersion {
 	case InteropVersion3, InteropVersion4, InteropVersion5:
 		return version
 	default:
-		return ""
+		if r.Header.Get("Tus-Resumable") == "1.0.0" {
+			return ""
+		}
+		return NormalUpload
 	}
 }
 
@@ -1377,6 +1381,8 @@ func isDraftVersionResumableUploadComplete(r *http.Request) bool {
 		return r.Header.Get("Upload-Complete") == "?1"
 	case InteropVersion3:
 		return r.Header.Get("Upload-Incomplete") == "?0"
+	case NormalUpload:
+		return true // Normal uploads are always complete
 	default:
 		return false
 	}
