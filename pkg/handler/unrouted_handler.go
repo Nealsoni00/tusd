@@ -25,9 +25,10 @@ type draftVersion string
 // versions of the resumable uploads draft from the HTTP working group.
 // See https://datatracker.ietf.org/doc/draft-ietf-httpbis-resumable-upload/
 const (
-	interopVersion3 draftVersion = "3" // From draft version -01
-	interopVersion4 draftVersion = "4" // From draft version -02
-	interopVersion5 draftVersion = "5" // From draft version -03
+	interopVersion3 draftVersion = "3"        // From draft version -01
+	interopVersion4 draftVersion = "4"        // From draft version -02
+	interopVersion5 draftVersion = "5"        // From draft version -03
+	normalUpload    draftVersion = "fallback" // Fallback to normal upload
 )
 
 var (
@@ -1366,7 +1367,10 @@ func getIETFDraftInteropVersion(r *http.Request) draftVersion {
 	case interopVersion3, interopVersion4, interopVersion5:
 		return version
 	default:
-		return ""
+		if r.Header.Get("Tus-Resumable") == "1.0.0" {
+			return ""
+		}
+		return normalUpload
 	}
 }
 
@@ -1379,6 +1383,8 @@ func isIETFDraftUploadComplete(r *http.Request) bool {
 		return r.Header.Get("Upload-Complete") == "?1"
 	case interopVersion3:
 		return r.Header.Get("Upload-Incomplete") == "?0"
+	case normalUpload:
+		return true // Normal uploads are always complete
 	default:
 		return false
 	}
