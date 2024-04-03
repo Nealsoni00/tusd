@@ -47,7 +47,7 @@ func (r *bodyReader) Read(b []byte) (int, error) {
 
 	n, err := r.reader.Read(b)
 	atomic.AddInt64(&r.bytesCounter, int64(n))
-	if !errors.Is(err, os.ErrDeadlineExceeded) {
+	if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
 		// If the timeout wasn't exceeded (due to SetReadDeadline), invoke
 		// the callback so the deadline can be extended
 		r.onReadDone()
