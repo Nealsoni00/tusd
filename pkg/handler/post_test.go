@@ -544,220 +544,140 @@ func TestPost(t *testing.T) {
 			}).Run(handler, t)
 		})
 	})
+	SubTest(t, "ExperimentalProtocol", func(t *testing.T, _ *MockFullDataStore, _ *StoreComposer) {
+		for _, interopVersion := range []string{"3", "4", "5"} {
+			SubTest(t, "InteropVersion"+interopVersion, func(t *testing.T, _ *MockFullDataStore, _ *StoreComposer) {
+				SubTest(t, "CompleteUpload", func(t *testing.T, store *MockFullDataStore, _ *StoreComposer) {
+					ctrl := gomock.NewController(t)
+					defer ctrl.Finish()
+					locker := NewMockFullLocker(ctrl)
+					lock := NewMockFullLock(ctrl)
+					upload := NewMockFullUpload(ctrl)
 
-	completeUploadTests := []struct {
-		name     string
-		httpTest httpTest
-		response []httptestrecorder.InformationalResponse
-	}{
-		{
-			name: "experimentalProtocol-draft-02 Complete Upload Test",
-			httpTest: httpTest{
-				Method: "POST",
-				ReqHeader: map[string]string{
-					"Upload-Draft-Interop-Version": "4",
-					"Upload-Complete":              "?1",
-					"Content-Type":                 "text/plain; charset=utf-8",
-					"Content-Disposition":          "attachment; filename=hello.txt",
-				},
-				ReqBody: strings.NewReader("hello world"),
-				Code:    http.StatusCreated,
-				ResHeader: map[string]string{
-					"Upload-Draft-Interop-Version": "4",
-					"Location":                     "https://tus.io/files/foo",
-					"Upload-Offset":                "11",
-				},
-			},
-			response: []httptestrecorder.InformationalResponse{
-				{
-					Code: 104,
-					Header: http.Header{
-						"Upload-Draft-Interop-Version": []string{"4"},
-						"Location":                     []string{"https://tus.io/files/foo"},
-						"X-Content-Type-Options":       []string{"nosniff"},
-					},
-				},
-			},
-		},
+					gomock.InOrder(
+						store.EXPECT().NewUpload(gomock.Any(), FileInfo{
+							SizeIsDeferred: false,
+							Size:           11,
+							MetaData: map[string]string{
+								"filename": "hello.txt",
+								"filetype": "text/plain",
+							},
+						}).Return(upload, nil),
+						upload.EXPECT().GetInfo(gomock.Any()).Return(FileInfo{
+							ID:             "foo",
+							SizeIsDeferred: false,
+							Size:           11,
+							MetaData: map[string]string{
+								"filename": "hello.txt",
+								"filetype": "text/plain",
+							},
+						}, nil),
+						locker.EXPECT().NewLock("foo").Return(lock, nil),
+						lock.EXPECT().Lock(gomock.Any(), gomock.Any()).Return(nil),
+						upload.EXPECT().WriteChunk(gomock.Any(), int64(0), NewReaderMatcher("hello world")).Return(int64(11), nil),
+						upload.EXPECT().FinishUpload(gomock.Any()).Return(nil),
+						lock.EXPECT().Unlock().Return(nil),
+					)
 
-		{
-			name: "experimentalProtocol-draft-01 Complete Upload Test with Upload-Length",
-			httpTest: httpTest{
-				Method: "POST",
-				ReqHeader: map[string]string{
-					"Upload-Draft-Interop-Version": "3",
-					"Upload-Incomplete":            "?0",
-					"Content-Type":                 "text/plain; charset=utf-8",
-					"Content-Disposition":          "attachment; filename=hello.txt",
-				},
-				ReqBody: strings.NewReader("hello world"),
-				Code:    http.StatusCreated,
-				ResHeader: map[string]string{
-					"Upload-Draft-Interop-Version": "3",
-					"Location":                     "https://tus.io/files/foo",
-					"Upload-Offset":                "11",
-				},
-			},
-			response: []httptestrecorder.InformationalResponse{
-				{
-					Code: 104,
-					Header: http.Header{
-						"Upload-Draft-Interop-Version": []string{"3"},
-						"Location":                     []string{"https://tus.io/files/foo"},
-						"X-Content-Type-Options":       []string{"nosniff"},
-					},
-				},
-			},
-		},
-	}
+					composer := NewStoreComposer()
+					composer.UseCore(store)
+					composer.UseLocker(locker)
 
-	for _, tc := range completeUploadTests {
-		SubTest(t, tc.name, func(t *testing.T, store *MockFullDataStore, _ *StoreComposer) {
-			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
-			locker := NewMockFullLocker(ctrl)
-			lock := NewMockFullLock(ctrl)
-			upload := NewMockFullUpload(ctrl)
+					handler, _ := NewHandler(Config{
+						StoreComposer:              composer,
+						BasePath:                   "/files/",
+						EnableExperimentalProtocol: true,
+					})
 
-			gomock.InOrder(
-				store.EXPECT().NewUpload(gomock.Any(), FileInfo{
-					SizeIsDeferred: false,
-					Size:           11,
-					MetaData: map[string]string{
-						"filename": "hello.txt",
-						"filetype": "text/plain",
-					},
-				}).Return(upload, nil),
-				upload.EXPECT().GetInfo(gomock.Any()).Return(FileInfo{
-					ID:             "foo",
-					SizeIsDeferred: false,
-					Size:           11,
-					MetaData: map[string]string{
-						"filename": "hello.txt",
-						"filetype": "text/plain",
-					},
-				}, nil),
-				locker.EXPECT().NewLock("foo").Return(lock, nil),
-				lock.EXPECT().Lock(gomock.Any(), gomock.Any()).Return(nil),
-				upload.EXPECT().WriteChunk(gomock.Any(), int64(0), NewReaderMatcher("hello world")).Return(int64(11), nil),
-				upload.EXPECT().FinishUpload(gomock.Any()).Return(nil),
-				lock.EXPECT().Unlock().Return(nil),
-			)
+					res := (&httpTest{
+						Method: "POST",
+						ReqHeader: addIETFUploadCompleteHeader(map[string]string{
+							"Upload-Draft-Interop-Version": interopVersion,
+							"Content-Type":                 "text/plain; charset=utf-8",
+							"Content-Disposition":          "attachment; filename=hello.txt",
+						}, true, interopVersion),
+						ReqBody: strings.NewReader("hello world"),
+						Code:    http.StatusCreated,
+						ResHeader: map[string]string{
+							"Upload-Draft-Interop-Version": interopVersion,
+							"Location":                     "http://tus.io/files/foo",
+							"Upload-Offset":                "11",
+						},
+					}).Run(handler, t)
 
-			composer := NewStoreComposer()
-			composer.UseCore(store)
-			composer.UseLocker(locker)
+					a := assert.New(t)
+					a.Equal([]httptestrecorder.InformationalResponse{
+						{
+							Code: 104,
+							Header: http.Header{
+								"Upload-Draft-Interop-Version": []string{interopVersion},
+								"Location":                     []string{"http://tus.io/files/foo"},
+								"X-Content-Type-Options":       []string{"nosniff"},
+							},
+						},
+					}, res.InformationalResponses)
+				})
 
-			handler, _ := NewHandler(Config{
-				StoreComposer:              composer,
-				BasePath:                   "/files/",
-				EnableExperimentalProtocol: true,
+				SubTest(t, "IncompleteUpload", func(t *testing.T, store *MockFullDataStore, _ *StoreComposer) {
+					ctrl := gomock.NewController(t)
+					defer ctrl.Finish()
+					locker := NewMockFullLocker(ctrl)
+					lock := NewMockFullLock(ctrl)
+					upload := NewMockFullUpload(ctrl)
+
+					gomock.InOrder(
+						store.EXPECT().NewUpload(gomock.Any(), FileInfo{
+							SizeIsDeferred: true,
+							MetaData:       map[string]string{},
+						}).Return(upload, nil),
+						upload.EXPECT().GetInfo(gomock.Any()).Return(FileInfo{
+							ID:             "foo",
+							SizeIsDeferred: true,
+						}, nil),
+						locker.EXPECT().NewLock("foo").Return(lock, nil),
+						lock.EXPECT().Lock(gomock.Any(), gomock.Any()).Return(nil),
+						upload.EXPECT().WriteChunk(gomock.Any(), int64(0), NewReaderMatcher("hello world")).Return(int64(11), nil),
+						lock.EXPECT().Unlock().Return(nil),
+					)
+
+					composer := NewStoreComposer()
+					composer.UseCore(store)
+					composer.UseLocker(locker)
+					composer.UseLengthDeferrer(store)
+
+					handler, _ := NewHandler(Config{
+						StoreComposer:              composer,
+						BasePath:                   "/files/",
+						EnableExperimentalProtocol: true,
+					})
+
+					res := (&httpTest{
+						Method: "POST",
+						ReqHeader: addIETFUploadCompleteHeader(map[string]string{
+							"Upload-Draft-Interop-Version": interopVersion,
+						}, false, interopVersion),
+						ReqBody: strings.NewReader("hello world"),
+						Code:    http.StatusCreated,
+						ResHeader: map[string]string{
+							"Upload-Draft-Interop-Version": interopVersion,
+							"Location":                     "http://tus.io/files/foo",
+							"Upload-Offset":                "11",
+						},
+					}).Run(handler, t)
+
+					a := assert.New(t)
+					a.Equal([]httptestrecorder.InformationalResponse{
+						{
+							Code: 104,
+							Header: http.Header{
+								"Upload-Draft-Interop-Version": []string{interopVersion},
+								"Location":                     []string{"http://tus.io/files/foo"},
+								"X-Content-Type-Options":       []string{"nosniff"},
+							},
+						},
+					}, res.InformationalResponses)
+				})
 			})
-
-			res := (&tc.httpTest).Run(handler, t)
-			a := assert.New(t)
-			a.Equal(tc.response, res.InformationalResponses)
-		})
-	}
-
-	incompleteUploadTests := []struct {
-		name     string
-		httpTest httpTest
-		response []httptestrecorder.InformationalResponse
-	}{
-		{
-			name: "experimentalProtocol-draft-01 Incomplete Upload Test with Upload-Length",
-			httpTest: httpTest{
-				Method: "POST",
-				ReqHeader: map[string]string{
-					"Upload-Draft-Interop-Version": "3",
-					"Upload-Incomplete":            "?1",
-				},
-				ReqBody: strings.NewReader("hello world"),
-				Code:    http.StatusCreated,
-				ResHeader: map[string]string{
-					"Upload-Draft-Interop-Version": "3",
-					"Location":                     "https://tus.io/files/foo",
-					"Upload-Offset":                "11",
-				},
-			},
-			response: []httptestrecorder.InformationalResponse{
-				{
-					Code: 104,
-					Header: http.Header{
-						"Upload-Draft-Interop-Version": []string{"3"},
-						"Location":                     []string{"https://tus.io/files/foo"},
-						"X-Content-Type-Options":       []string{"nosniff"},
-					},
-				},
-			},
-		},
-		{
-			name: "experimentalProtocol-draft-02 Incomplete Upload Test",
-			httpTest: httpTest{
-				Method: "POST",
-				ReqHeader: map[string]string{
-					"Upload-Draft-Interop-Version": "4",
-					"Upload-Complete":              "?0",
-				},
-				ReqBody: strings.NewReader("hello world"),
-				Code:    http.StatusCreated,
-				ResHeader: map[string]string{
-					"Upload-Draft-Interop-Version": "4",
-					"Location":                     "https://tus.io/files/foo",
-					"Upload-Offset":                "11",
-				},
-			},
-			response: []httptestrecorder.InformationalResponse{
-				{
-					Code: 104,
-					Header: http.Header{
-						"Upload-Draft-Interop-Version": []string{"4"},
-						"Location":                     []string{"https://tus.io/files/foo"},
-						"X-Content-Type-Options":       []string{"nosniff"},
-					},
-				},
-			},
-		},
-	}
-
-	for _, tc := range incompleteUploadTests {
-		SubTest(t, tc.name, func(t *testing.T, store *MockFullDataStore, _ *StoreComposer) {
-			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
-			locker := NewMockFullLocker(ctrl)
-			lock := NewMockFullLock(ctrl)
-			upload := NewMockFullUpload(ctrl)
-
-			gomock.InOrder(
-				store.EXPECT().NewUpload(gomock.Any(), FileInfo{
-					SizeIsDeferred: true,
-					MetaData:       map[string]string{},
-				}).Return(upload, nil),
-				upload.EXPECT().GetInfo(gomock.Any()).Return(FileInfo{
-					ID:             "foo",
-					SizeIsDeferred: true,
-				}, nil),
-				locker.EXPECT().NewLock("foo").Return(lock, nil),
-				lock.EXPECT().Lock(gomock.Any(), gomock.Any()).Return(nil),
-				upload.EXPECT().WriteChunk(gomock.Any(), int64(0), NewReaderMatcher("hello world")).Return(int64(11), nil),
-				lock.EXPECT().Unlock().Return(nil),
-			)
-
-			composer := NewStoreComposer()
-			composer.UseCore(store)
-			composer.UseLocker(locker)
-			composer.UseLengthDeferrer(store)
-
-			handler, _ := NewHandler(Config{
-				StoreComposer:              composer,
-				BasePath:                   "/files/",
-				EnableExperimentalProtocol: true,
-			})
-
-			res := (&tc.httpTest).Run(handler, t)
-			a := assert.New(t)
-			a.Equal(tc.response, res.InformationalResponses)
-		})
-	}
+		}
+	})
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"mime"
@@ -20,18 +21,24 @@ const UploadLengthDeferred = "1"
 
 type draftVersion string
 
+// These are the different interoperability versions defines in the different
+// versions of the resumable uploads draft from the HTTP working group.
+// See https://datatracker.ietf.org/doc/draft-ietf-httpbis-resumable-upload/
 const (
-	NormalUpload    draftVersion = "fallback" // Fallback to normal upload
-	InteropVersion3 draftVersion = "3"        // From draft version -01
-	InteropVersion4 draftVersion = "4"        // From draft version -02
-	InteropVersion5 draftVersion = "5"        // From draft version -03
+	normalUpload    draftVersion = "fallback" // Fallback to normal upload
+	interopVersion3 draftVersion = "3"        // From draft version -01
+	interopVersion4 draftVersion = "4"        // From draft version -02
+	interopVersion5 draftVersion = "5"        // From draft version -03
 )
 
 var (
-	reExtractFileID  = regexp.MustCompile(`([^/]+)\/?$`)
 	reForwardedHost  = regexp.MustCompile(`host="?([^;"]+)`)
 	reForwardedProto = regexp.MustCompile(`proto=(https?)`)
 	reMimeType       = regexp.MustCompile(`^[a-z]+\/[a-z0-9\-\+\.]+$`)
+	// We only allow certain URL-safe characters in upload IDs. URL-safe in this means
+	// that their are allowed in a URI's path component according to RFC 3986.
+	// See https://datatracker.ietf.org/doc/html/rfc3986#section-3.3
+	reValidUploadId = regexp.MustCompile(`^[A-Za-z0-9\-._~%!$'()*+,;=/:@]*$`)
 )
 
 var (
@@ -56,6 +63,7 @@ var (
 	ErrUploadInterrupted                = NewError("ERR_UPLOAD_INTERRUPTED", "upload has been interrupted by another request for this upload resource", http.StatusBadRequest)
 	ErrServerShutdown                   = NewError("ERR_SERVER_SHUTDOWN", "request has been interrupted because the server is shutting down", http.StatusServiceUnavailable)
 	ErrOriginNotAllowed                 = NewError("ERR_ORIGIN_NOT_ALLOWED", "request origin is not allowed", http.StatusForbidden)
+	ErrUnexpectedEOF                    = NewError("ERR_UNEXPECTED_EOF", "server expected to receive more bytes", http.StatusBadRequest)
 
 	// These two responses are 500 for backwards compatability. Clients might receive a timeout response
 	// when the upload got interrupted. Most clients will not retry 4XX but only 5XX, so we responsd with 500 here.
@@ -215,7 +223,7 @@ func (handler *UnroutedHandler) Middleware(h http.Handler) http.Handler {
 		}
 
 		// Detect requests with tus v1 protocol vs the IETF resumable upload draft
-		isTusV1 := !handler.supportsDraftVersionResumableUploadRequest(r)
+		isTusV1 := !handler.usesIETFDraft(r)
 
 		if isTusV1 {
 			// Set current version used by the server
@@ -264,7 +272,7 @@ func (handler *UnroutedHandler) Middleware(h http.Handler) http.Handler {
 // PostFile creates a new file upload using the datastore after validating the
 // length and parsing the metadata.
 func (handler *UnroutedHandler) PostFile(w http.ResponseWriter, r *http.Request) {
-	if handler.supportsDraftVersionResumableUploadRequest(r) {
+	if handler.usesIETFDraft(r) {
 		handler.PostFileV2(w, r)
 		return
 	}
@@ -284,7 +292,7 @@ func (handler *UnroutedHandler) PostFile(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Parse Upload-Concat header
-	isPartial, isFinal, partialUploadIDs, err := parseConcat(concatHeader)
+	isPartial, isFinal, partialUploadIDs, err := parseConcat(concatHeader, handler.basePath)
 	if err != nil {
 		handler.sendError(c, err)
 		return
@@ -351,6 +359,11 @@ func (handler *UnroutedHandler) PostFile(w http.ResponseWriter, r *http.Request)
 
 		// Apply changes returned from the pre-create hook.
 		if changes.ID != "" {
+			if err := validateUploadId(changes.ID); err != nil {
+				handler.sendError(c, err)
+				return
+			}
+
 			info.ID = changes.ID
 		}
 
@@ -437,18 +450,18 @@ func (handler *UnroutedHandler) PostFile(w http.ResponseWriter, r *http.Request)
 // PostFile creates a new file upload using the datastore after validating the
 // length and parsing the metadata.
 func (handler *UnroutedHandler) PostFileV2(w http.ResponseWriter, r *http.Request) {
-	currentUploadDraftInteropVersion := getDraftVersionResumableUpload(r)
+	currentUploadDraftInteropVersion := getIETFDraftInteropVersion(r)
 	c := handler.getContext(w, r)
 
 	// Parse headers
 	contentType := r.Header.Get("Content-Type")
 	contentDisposition := r.Header.Get("Content-Disposition")
-	isComplete := isDraftVersionResumableUploadComplete(r)
+	willCompleteUpload := isIETFDraftUploadComplete(r)
 
 	info := FileInfo{
 		MetaData: make(MetaData),
 	}
-	if isComplete && r.ContentLength != -1 {
+	if willCompleteUpload && r.ContentLength != -1 {
 		// If the client wants to perform the upload in one request with Content-Length, we know the final upload size.
 		info.Size = r.ContentLength
 	} else {
@@ -500,6 +513,11 @@ func (handler *UnroutedHandler) PostFileV2(w http.ResponseWriter, r *http.Reques
 
 		// Apply changes returned from the pre-create hook.
 		if changes.ID != "" {
+			if err := validateUploadId(changes.ID); err != nil {
+				handler.sendError(c, err)
+				return
+			}
+
 			info.ID = changes.ID
 		}
 
@@ -560,7 +578,7 @@ func (handler *UnroutedHandler) PostFileV2(w http.ResponseWriter, r *http.Reques
 	}
 
 	// 4. Finish upload, if necessary
-	if isComplete && info.SizeIsDeferred {
+	if willCompleteUpload && info.SizeIsDeferred {
 		info, err = upload.GetInfo(c)
 		if err != nil {
 			handler.sendError(c, err)
@@ -629,7 +647,7 @@ func (handler *UnroutedHandler) HeadFile(w http.ResponseWriter, r *http.Request)
 		},
 	}
 
-	if !handler.supportsDraftVersionResumableUploadRequest(r) {
+	if !handler.usesIETFDraft(r) {
 		// Add Upload-Concat header if possible
 		if info.IsPartial {
 			resp.Header["Upload-Concat"] = "partial"
@@ -659,27 +677,12 @@ func (handler *UnroutedHandler) HeadFile(w http.ResponseWriter, r *http.Request)
 
 		resp.StatusCode = http.StatusOK
 	} else {
-		currentUploadDraftInteropVersion := getDraftVersionResumableUpload(r)
-		uploadComplete := !info.SizeIsDeferred && info.Offset == info.Size
+		isUploadCompleteNow := !info.SizeIsDeferred && info.Offset == info.Size
+		setIETFDraftUploadComplete(r, resp, isUploadCompleteNow)
+		resp.Header["Upload-Draft-Interop-Version"] = string(getIETFDraftInteropVersion(r))
 
-		switch currentUploadDraftInteropVersion {
-		case InteropVersion3:
-			if uploadComplete {
-				resp.Header["Upload-Incomplete"] = "?0"
-			} else {
-				resp.Header["Upload-Incomplete"] = "?1"
-			}
-		case InteropVersion4, InteropVersion5:
-			if uploadComplete {
-				resp.Header["Upload-Complete"] = "?1"
-			} else {
-				resp.Header["Upload-Complete"] = "?0"
-			}
-		}
-
-		resp.Header["Upload-Draft-Interop-Version"] = string(currentUploadDraftInteropVersion)
-
-		// Draft requires a 204 No Content response
+		// Draft -01 and -02 require a 204 No Content response. Version -03 allows 200 OK as well,
+		// but we stick to 204 to not make the logic less complex.
 		resp.StatusCode = http.StatusNoContent
 	}
 
@@ -691,7 +694,7 @@ func (handler *UnroutedHandler) HeadFile(w http.ResponseWriter, r *http.Request)
 func (handler *UnroutedHandler) PatchFile(w http.ResponseWriter, r *http.Request) {
 	c := handler.getContext(w, r)
 
-	isTusV1 := !handler.supportsDraftVersionResumableUploadRequest(r)
+	isTusV1 := !handler.usesIETFDraft(r)
 
 	// Check for presence of application/offset+octet-stream
 	if isTusV1 && r.Header.Get("Content-Type") != "application/offset+octet-stream" {
@@ -793,8 +796,8 @@ func (handler *UnroutedHandler) PatchFile(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	isComplete := isDraftVersionResumableUploadComplete(r)
-	if isComplete && info.SizeIsDeferred {
+	willCompleteUpload := isIETFDraftUploadComplete(r)
+	if willCompleteUpload && info.SizeIsDeferred {
 		info, err = upload.GetInfo(c)
 		if err != nil {
 			handler.sendError(c, err)
@@ -1350,41 +1353,56 @@ func (handler *UnroutedHandler) lockUpload(c *httpContext, id string) (Lock, err
 	return lock, nil
 }
 
-// supportsDraftVersionResumableUploadRequest returns whether a HTTP request includes a sign that it is
-// related to resumable upload draft from IETF (instead of tus v1)
-func (handler UnroutedHandler) supportsDraftVersionResumableUploadRequest(r *http.Request) bool {
-	interopVersionHeader := getDraftVersionResumableUpload(r)
+// usesIETFDraft returns whether a HTTP request uses a supported version of the resumable upload draft from IETF
+// (instead of tus v1) and support has been enabled in tusd.
+func (handler UnroutedHandler) usesIETFDraft(r *http.Request) bool {
+	interopVersionHeader := getIETFDraftInteropVersion(r)
 	return handler.config.EnableExperimentalProtocol && interopVersionHeader != ""
 }
 
-// getDraftVersionResumableUpload returns the resumable upload draft version from the headers
-// of a HTTP request
-func getDraftVersionResumableUpload(r *http.Request) draftVersion {
+// getIETFDraftInteropVersion returns the resumable upload draft interop version from the headers.
+func getIETFDraftInteropVersion(r *http.Request) draftVersion {
 	version := draftVersion(r.Header.Get("Upload-Draft-Interop-Version"))
 	switch version {
-	case InteropVersion3, InteropVersion4, InteropVersion5:
+	case interopVersion3, interopVersion4, interopVersion5:
 		return version
 	default:
-		if r.Header.Get("Tus-Resumable") == "1.0.0" {
-			return ""
-		}
-		return NormalUpload
+		return ""
 	}
 }
 
-// isDraftVersionResumableUploadComplete returns whether a HTTP request upload is complete
-// according to the set resumable upload draft version from IETF
-func isDraftVersionResumableUploadComplete(r *http.Request) bool {
-	currentUploadDraftInteropVersion := getDraftVersionResumableUpload(r)
+// isIETFDraftUploadComplete returns whether a HTTP request upload is complete
+// according to the set resumable upload draft version from IETF.
+func isIETFDraftUploadComplete(r *http.Request) bool {
+	currentUploadDraftInteropVersion := getIETFDraftInteropVersion(r)
 	switch currentUploadDraftInteropVersion {
-	case InteropVersion4, InteropVersion5:
+	case interopVersion4, interopVersion5:
 		return r.Header.Get("Upload-Complete") == "?1"
-	case InteropVersion3:
+	case interopVersion3:
 		return r.Header.Get("Upload-Incomplete") == "?0"
-	case NormalUpload:
-		return true // Normal uploads are always complete
 	default:
 		return false
+	}
+}
+
+// setIETFDraftUploadComplete sets the Upload-Complete (Upload-Incomplete) to the provided
+// value, depending on the interop version used in the request.
+func setIETFDraftUploadComplete(r *http.Request, resp HTTPResponse, isComplete bool) {
+	currentUploadDraftInteropVersion := getIETFDraftInteropVersion(r)
+
+	switch currentUploadDraftInteropVersion {
+	case interopVersion3:
+		if isComplete {
+			resp.Header["Upload-Incomplete"] = "?0"
+		} else {
+			resp.Header["Upload-Incomplete"] = "?1"
+		}
+	case interopVersion4, interopVersion5:
+		if isComplete {
+			resp.Header["Upload-Complete"] = "?1"
+		} else {
+			resp.Header["Upload-Complete"] = "?0"
+		}
 	}
 }
 
@@ -1446,7 +1464,7 @@ func SerializeMetadataHeader(meta map[string]string) string {
 // Parse the Upload-Concat header, e.g.
 // Upload-Concat: partial
 // Upload-Concat: final;http://tus.io/files/a /files/b/
-func parseConcat(header string) (isPartial bool, isFinal bool, partialUploads []string, err error) {
+func parseConcat(header string, basePath string) (isPartial bool, isFinal bool, partialUploads []string, err error) {
 	if len(header) == 0 {
 		return
 	}
@@ -1467,7 +1485,7 @@ func parseConcat(header string) (isPartial bool, isFinal bool, partialUploads []
 				continue
 			}
 
-			id, extractErr := extractIDFromPath(value)
+			id, extractErr := extractIDFromURL(value, basePath)
 			if extractErr != nil {
 				err = extractErr
 				return
@@ -1486,13 +1504,25 @@ func parseConcat(header string) (isPartial bool, isFinal bool, partialUploads []
 	return
 }
 
-// extractIDFromPath pulls the last segment from the url provided
-func extractIDFromPath(url string) (string, error) {
-	result := reExtractFileID.FindStringSubmatch(url)
-	if len(result) != 2 {
+// extractIDFromPath extracts the upload ID from a path, which has already
+// been stripped of the base path (done by the user). Effectively, we only
+// remove leading and trailing slashes.
+func extractIDFromPath(path string) (string, error) {
+	return strings.Trim(path, "/"), nil
+}
+
+// extractIDFromURL extracts the upload ID from a full URL or a full path
+// (including the base path). For example:
+//
+//	https://example.com/files/1234/5678 -> 1234/5678
+//	/files/1234/5678 -> 1234/5678
+func extractIDFromURL(url string, basePath string) (string, error) {
+	_, id, ok := strings.Cut(url, basePath)
+	if !ok {
 		return "", ErrNotFound
 	}
-	return result[1], nil
+
+	return extractIDFromPath(id)
 }
 
 // getRequestId returns the value of the X-Request-ID header, if available,
@@ -1510,4 +1540,27 @@ func getRequestId(r *http.Request) string {
 	}
 
 	return reqId
+}
+
+// validateUploadId checks whether an ID included in a FileInfoChange struct is allowed.
+func validateUploadId(newId string) error {
+	if newId == "" {
+		// An empty ID from FileInfoChanges is allowed. The store will then
+		// just pick an ID.
+		return nil
+	}
+
+	if strings.HasPrefix(newId, "/") || strings.HasSuffix(newId, "/") {
+		// Disallow leading and trailing slashes, as these would be
+		// stripped away by extractIDFromPath, which can cause problems and confusion.
+		return fmt.Errorf("validation error in FileInfoChanges: ID must not begin or end with a forward slash (got: %s)", newId)
+	}
+
+	if !reValidUploadId.MatchString(newId) {
+		// Disallow some non-URL-safe characters in the upload ID to
+		// prevent issues with URL parsing, which are though to debug for users.
+		return fmt.Errorf("validation error in FileInfoChanges: ID must contain only URL-safe character: %s (got: %s)", reValidUploadId.String(), newId)
+	}
+
+	return nil
 }
